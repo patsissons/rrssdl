@@ -150,7 +150,7 @@ class Show
         ret = review = nil
         dlpath, review, ep_info = match_title(i.title)
         # if dlpath was set, then download that bitch! (with a timeout of course)
-        Timeout::timeout(@main.torTimeout) { ret = download(i.link, dlpath) } unless dlpath.nil?
+        Timeout::timeout(@main.torTimeout) { ret = download(i.link, dlpath, review) } unless dlpath.nil?
         # precedence to the download return state, then the review state
         ret = ret.nil? ? nil : review ? nil : ret
         # if nothing has gone wrong, update our status
@@ -219,24 +219,45 @@ class Show
     end
 
     # download from uri to dlpath
-    def download(uri, dlpath)
+    def download(uri, dlpath, review)
         @logger.ftrace {'ENTER'}
         ret = nil
         begin
+            isMagnet = false
+            uri = URI.escape(uri, '[]')
+            @logger.info {"Escaped URI => #{uri}"}
+            m = rxmatch('^magnet:.*btih:([a-zA-Z0-9]+)', uri)
+            unless m.nil?
+                @logger.info {'Magnet URI Detected'}
+                if review
+                    dlpath = File.join(File.expand_path(conf['download_path_review']), "REVIEW-meta-#{m[1]}.torrent")
+                else
+                    dlpath = File.join(File.expand_path(conf['download_path']), "meta-#{m[1]}.torrent")
+                end
+                isMagnet = true
+            end
+
             # make sure a file of the same path doesn't already exist
             unless File.size?(dlpath).nil?
                 @logger.warn {"'#{dlpath}' already exists, not downloading"}
                 ret = nil
-            else
-                @logger.debug {"Downloading #{uri} to #{dlpath}"}
-                # download the uri
-                uri = URI.escape(uri, '[]')
-                @logger.info {"Escaped URI => #{uri}"}
-                File.open(dlpath, 'w') do |f|
-                    f.write(open(uri).read)
-                    f.close
+            else 
+                if isMagnet
+                    @logger.debug {"Creating Magnet File from #{uri} to #{dlpath}"}
+                    File.open(dlpath, 'w') do |f|
+                        f.write("d10:magnet-uri#{uri.length}:#{uri}e")
+                        f.close
+                    end
+                    ret = dlpath
+                else
+                    @logger.debug {"Downloading #{uri} to #{dlpath}"}
+                    # download the uri
+                    File.open(dlpath, 'w') do |f|
+                        f.write(open(uri).read)
+                        f.close
+                    end
+                    ret = dlpath
                 end
-                ret = dlpath
             end
         rescue => e
             @logger.error {"Download Error: #{e}\r\n#{e.backtrace}"}
